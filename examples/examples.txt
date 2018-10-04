@@ -1,0 +1,3 @@
+Examples results for the following results are included with the simulator:
+  - AWGN simulation for all 15 CQI values (1.4 MHz)
+  - PedB simulation for CQI 7 with SISO, Open Loop SM 2x1, 4x2 and Open Loop SM 4x2. Closed Loop SM 4x2 is also included, but since the feedback loop is not closed, performance is similar to open loop.

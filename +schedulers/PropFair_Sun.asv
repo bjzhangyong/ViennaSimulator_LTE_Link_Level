@@ -1,0 +1,99 @@
+classdef PropFair_Sun < network_elements.lteScheduler
+% OFDMA Proportional Fair Scheduler based on a greedy algorithm presented in
+% "Reduced-Complexity Proportional Fair Scheduling for OFDMA Systems"
+% Z. Sun, C. Yin, G. Yue, IEEE 2006 International Conference on Communications, Circuits and Systems Proceedings 
+% Stefan Schwarz 
+% (c) 2010 by INTHFT
+% www.nt.tuwien.ac.at
+
+   properties
+       SINR_averager
+       CQI_mapping_data
+       linprog_options
+       alphabets
+       av_throughput % exponentially weighted throughputs
+       Tsub     % subframe duration
+   end
+
+   methods
+       function obj = PropFair_Sun(RB_grid_size,Ns_RB,UEs_to_be_scheduled,scheduler_params,CQI_params,averager,mapping_data,alphabets,Tsub)
+           % Fill in basic parameters (handled by the superclass constructor)
+            % Fill in basic parameters (handled by the superclass constructor)
+           obj = obj@network_elements.lteScheduler(RB_grid_size,Ns_RB,UEs_to_be_scheduled,scheduler_params,CQI_params);
+           
+           % 0 CQI is not assigned (it means that conditions are out of
+           % range to transmit, so no data will be assigned to 0-CQI RBs)
+           %obj.assign_zero_CQI = scheduler_params.assign_zero_CQI;
+           
+           obj.static_scheduler = false;
+           obj.SINR_averager = averager;
+           % Get a vector of scheduling params (one for each UE)
+           % initialized to the values that we want
+           obj.UE_static_params = obj.get_initialized_UE_params(scheduler_params,CQI_params);
+           obj.CQI_mapping_data = mapping_data;
+           obj.linprog_options = optimset('LargeScale','off','Simplex','on','Display','off');
+           obj.alphabets = alphabets;
+           obj.av_throughput = zeros(size(UEs_to_be_scheduled,2),1);
+           obj.Tsub = Tsub;
+       end
+
+       function UE_scheduling = scheduler_users(obj,subframe_corr,total_no_refsym,SyncUsedElements,UE_output,UE_specific_data,cell_genie,PBCHsyms)
+           UE_scheduling = obj.UE_static_params;
+           N_RB = size(UE_output(1).CQI,1)*2;
+           N_UE = size(UE_output,2);
+           c = zeros(N_RB,N_UE);
+           a = zeros(N_UE,1);
+           b = zeros(N_UE,1);
+           temp_UE = struct([]);
+           obj.set_pmi_ri(UE_scheduling,N_UE,UE_output,a,b,c)
+           for uu = 1:N_UE
+%                UE_scheduling(uu).CQI_params = [];
+%                if ~isempty(UE_output(uu).PMI)   % check wheter PMI is fed back
+%                    if ~isempty(UE_output(uu).RI)    % check wheter RI is fed back
+%                         UE_scheduling(uu).nLayers = UE_output(uu).RI;
+%                         UE_scheduling(uu).nCodewords = min(2,UE_output(uu).RI);
+%                    end
+%                UE_scheduling(uu).PMI = UE_output(uu).PMI;
+%                end
+%                temp_UE(uu).CQI = UE_output(uu).CQI;
+%                temp_UE(uu).CQI(temp_UE(uu).CQI==20) = 0;
+%                CQI_bar = max(temp_UE(uu).CQI(:));
+%                if CQI_bar == 20
+%                    CQI_bar = 0;
+%                end
+%                CQI_bar = CQI_bar +1;
+%                a(uu) = obj.CQI_mapping_data.coeffs(1) * obj.SINR_averager.MI_data(1).k(CQI_bar);
+%                b(uu) = obj.CQI_mapping_data.coeffs(2) * obj.SINR_averager.MI_data(1).k(CQI_bar)+obj.SINR_averager.MI_data(1).d(CQI_bar);
+                % compute average throughput
+               obj.av_throughput(uu) = obj.compute_av_throughput(UE_output(uu),obj.av_throughput(uu),uu,N_UE);
+           end
+           for rb = 1:N_RB
+               for uu = 1:N_UE
+                    c(rb,uu) = a(uu)* temp_UE(uu).CQI(rb)+b(uu); % efficiency in bit/channel use
+               end
+           end  
+                      
+           RB_set = ones(N_RB,1);
+           RB_UEs = false(N_RB,N_UE);
+           for rr = 1:N_RB
+               res = find(RB_set);
+               metric = zeros(length(res),N_UE);
+               for r_ = 1:sum(RB_set)
+                   for u_ = 1:N_UE
+                       metric(res(r_),u_) = c(res(r_),u_)*12*7/((obj.av_const-1)*obj.av_throughput(u_)+RB_UEs(:,u_).'*c(:,u_)*12*7);      % 12*7 equals the number of elements in a RB             
+                   end
+               end
+               maxi = max(metric(:));
+               indis = find(metric == maxi);
+               ind = indis(randi(length(indis)));
+               [temp_res,temp_ue] = ind2sub(size(metric),ind);
+               RB_set(temp_res) = 0;
+               RB_UEs(temp_res,temp_ue) = true;
+           end
+           RBs = vec(RB_UEs');
+           %%
+           UE_scheduling = obj.set_cqi(UE_scheduling,1:N_UE,RBs,N_UE,N_RB,UE_output);
+           obj.calculate_allocated_bits(UE_scheduling,subframe_corr,total_no_refsym,SyncUsedElements,PBCHsyms);                     
+       end
+   end
+end 
